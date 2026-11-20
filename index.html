@@ -5,31 +5,87 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Входящие заявки</title>
   <style>
-    body { max-width: 40rem; margin: 2rem auto; padding: 0 1rem; font: 1rem/1.5 system-ui, sans-serif; }
-    textarea { box-sizing: border-box; display: block; width: 100%; margin: .5rem 0; padding: .5rem; font: inherit; }
-    button { padding: .4rem .8rem; font: inherit; }
-    pre { white-space: pre-wrap; }
+    body { max-width: 44rem; margin: 2rem auto; padding: 0 1rem; font: 1rem/1.5 system-ui, sans-serif; color: #20242a; }
+    textarea { box-sizing: border-box; display: block; width: 100%; margin: .5rem 0 1rem; padding: .75rem; font: inherit; border: 1px solid #aab2bd; border-radius: .4rem; }
+    button { padding: .55rem 1rem; font: inherit; cursor: pointer; border: 0; border-radius: .4rem; background: #2457c5; color: white; }
+    button:disabled { opacity: .6; cursor: wait; }
+    #result { margin-top: 1.25rem; padding: 1rem; border-radius: .5rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+    #result:empty { display: none; }
+    .error { color: #8b1e1e; background: #fff0f0; }
+    .success { background: #eff8f1; }
+    .field { margin: .25rem 0; }
+    .field strong { display: inline-block; min-width: 6rem; }
   </style>
 </head>
 <body>
   <h1>Входящие заявки</h1>
-  <form>
+  <form id="triage-form">
     <label for="message">Текст заявки</label>
-    <textarea id="message" rows="4"></textarea>
-    <button type="submit">Разобрать заявку</button>
+    <textarea id="message" rows="4" placeholder="Например: Подскажите, когда доставят заказ?" required></textarea>
+    <button id="submit" type="submit">Разобрать заявку</button>
   </form>
-  <pre id="result" aria-live="polite"></pre>
+  <section id="result" aria-live="polite" aria-atomic="true"></section>
   <script type="module">
-    const form = document.querySelector("form");
+    const form = document.querySelector("#triage-form");
+    const message = document.querySelector("#message");
+    const submit = document.querySelector("#submit");
     const result = document.querySelector("#result");
+
+    function showMessage(text, kind = "error") {
+      result.className = kind;
+      result.textContent = text;
+    }
+
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const reply = await fetch("/api/triage", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: document.querySelector("#message").value }),
-      });
-      result.textContent = JSON.stringify(await reply.json(), null, 2);
+      const text = message.value.trim();
+      // Сразу удаляем предыдущий результат, чтобы устаревший черновик не приняли за новый.
+      result.replaceChildren();
+      result.className = "";
+      if (!text) {
+        showMessage("Введите текст заявки перед разбором.");
+        message.focus();
+        return;
+      }
+
+      submit.disabled = true;
+      submit.textContent = "Разбираем…";
+      showMessage("Идёт разбор заявки…", "success");
+      try {
+        const response = await fetch("/api/triage", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        const data = await response.json();
+        if (response.status === 400 || data.status === "invalid_input") {
+          showMessage("Не удалось принять заявку. Проверьте, что текст заполнен, и повторите попытку.");
+          return;
+        }
+        if (!response.ok || data.status !== "ready") {
+          showMessage("AI-разбор недоступен. Проверьте заявку вручную: изучите текст обращения, определите тему и подготовьте ответ клиенту.");
+          return;
+        }
+        const heading = document.createElement("h2");
+        heading.textContent = "Результат разбора";
+        const topic = document.createElement("p");
+        topic.className = "field";
+        const topicLabel = document.createElement("strong");
+        topicLabel.textContent = "Тема:";
+        topic.append(topicLabel, document.createTextNode(data.topic));
+        const draft = document.createElement("p");
+        draft.className = "field";
+        const draftLabel = document.createElement("strong");
+        draftLabel.textContent = "Черновик:";
+        draft.append(draftLabel, document.createTextNode(data.draft));
+        result.replaceChildren(heading, topic, draft);
+        result.className = "success";
+      } catch {
+        showMessage("Не удалось связаться с сервисом разбора. Проверьте заявку вручную и попробуйте позже.");
+      } finally {
+        submit.disabled = false;
+        submit.textContent = "Разобрать заявку";
+      }
     });
   </script>
 </body>
